@@ -67,6 +67,13 @@ def convolutional(idx, block, in_channels):
     return module, filters
 
 
+def upsample(idx, block):
+    module = nn.Sequential()
+    upsample = nn.Upsample(scale_factor=2, mode='bilinear')
+    module.add_module('upsample_{}'.format(idx), upsample)
+    return module
+
+
 def create_modules(blocks):
     net_info = blocks[0]  # First block contains net hyperparameters
     module_list = nn.ModuleList()
@@ -77,8 +84,12 @@ def create_modules(blocks):
         # Create the block, create the module for the block, return module with
         # the previous filters. Then append to the module_list and
         # output_filters
-        if block['type'] == 'convolutional':
+        block_type = block['type']
+        if block_type == 'convolutional':
             module, prev_filters = convolutional(idx, block, prev_filters)
+
+        elif block_type == 'upsample':
+            module = upsample(idx, block)
 
         # Append the module and it output feature map depth size
         module_list.append(module)
