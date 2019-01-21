@@ -102,6 +102,13 @@ def route(idx, block, output_filters):
     return module, filters
 
 
+def shortcut(idx, block):
+    module = nn.Sequential()
+    shortcut = EmptyLayer()
+    module.add_module('shortcut_{}'.format(idx), shortcut)
+    return module
+
+
 def create_modules(blocks):
     net_info = blocks[0]  # First block contains net hyperparameters
     module_list = nn.ModuleList()
@@ -121,6 +128,9 @@ def create_modules(blocks):
 
         elif block_type == 'route':
             module, prev_filters = route(idx, block, output_filters)
+
+        elif block_type == 'shortcut':
+            module = shortcut(idx, block)
 
         # Append the module and it output feature map depth size
         module_list.append(module)
