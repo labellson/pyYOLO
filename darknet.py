@@ -4,7 +4,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.autograd import Variable
+from util import predict_transform
 import numpy as np
+import cv2
 
 
 class EmptyLayer(nn.Module):
@@ -105,6 +107,10 @@ def route(idx, block, output_filters):
     else:
         filters = output_filters[start]
 
+    # Add start and end to the route dict
+    block['start'] = start
+    block['end'] = end
+
     return module, filters
 
 
@@ -162,7 +168,67 @@ def create_modules(blocks):
     return (net_info, module_list)
 
 
+class Darknet(nn.Module):
+    def __init__(self, cfgfile):
+        super(Darknet, self).__init__()
+        self.blocks = parse_cfg(cfgfile)
+        self.net_info, self.module_list = create_modules(self.blocks)
+
+    def forward(self, x, cuda=True):
+        modules = self.blocks[1:]
+        outputs = {}
+
+        write = False
+        for idx, module in enumerate(modules):
+            module_type = module['type']
+
+            if module_type in ('convolutional', 'upsample'):
+                x = self.module_list[idx](x)
+
+            elif module_type == 'route':
+                if module['end'] == 0:
+                    x = outputs[module['start']]
+                else:
+                    x = torch.cat((outputs[module['start']],
+                                   outputs[module['end']]), 1)
+
+            elif module_type == 'shortcut':
+                from_ = int(module['from'])
+                x = outputs[idx - 1] + outputs[idx + from_]
+
+            elif module_type == 'yolo':
+                anchors = self.module_list[idx][0].anchors
+                in_dim = int(self.net_info['height'])
+                num_classes = int(module['classes'])
+
+                # Transform
+                x = predict_transform(x.data, in_dim, anchors, num_classes,
+                                      cuda)
+                if not write:
+                    detections = x
+                    write = True
+
+                else:
+                    detections = torch.cat((detections, x), 1)
+
+            outputs[idx] = x
+
+        return detections
+
+
 if __name__ == '__main__':
     blocks = parse_cfg('./yolov3.cfg')
     modules = create_modules(blocks)
     print(modules)
+
+    # Test the net forward pass
+    img = cv2.imread('dog-cycle-car.png')
+    size = int(blocks[0]['height'])
+    img = cv2.resize(img, (size, size)) # Input dimension
+    img = img[:, :, ::-1].transpose((2,0,1))
+    img = img[np.newaxis] / 255.0
+    img = Variable(torch.from_numpy(img).float())
+
+    model = Darknet('./yolov3.cfg')
+    pred = model(img, False)
+    print(pred)
