@@ -12,6 +12,12 @@ class EmptyLayer(nn.Module):
         super(EmptyLayer, self).__init__()
 
 
+class DetectionLayer(nn.Module):
+    def __init__(self, anchors):
+        super(DetectionLayer, self).__init__()
+        self.anchors = anchors
+
+
 def parse_cfg(cfgfile):
     """
     Takes a configuration file
@@ -109,6 +115,20 @@ def shortcut(idx, block):
     return module
 
 
+def yolo(idx, block):
+    module = nn.Sequential()
+    mask = block['mask'].split(',')
+    mask = [int(x) for x in mask]
+
+    anchors = [int(a) for a in block['anchors'].split(',')]
+    anchors = [(anchors[i], anchors[i+1]) for i in range(0, len(anchors), 2)]
+    anchors = [anchors[i] for i in mask]
+
+    detection = DetectionLayer(anchors)
+    module.add_module('Detection_{}'.format(idx), detection)
+    return module
+
+
 def create_modules(blocks):
     net_info = blocks[0]  # First block contains net hyperparameters
     module_list = nn.ModuleList()
@@ -132,6 +152,11 @@ def create_modules(blocks):
         elif block_type == 'shortcut':
             module = shortcut(idx, block)
 
+        elif block_type == 'yolo':
+            module = yolo(idx, block)
+
         # Append the module and it output feature map depth size
         module_list.append(module)
         output_filters.append(prev_filters)
+
+    return (net_info, module_list)
