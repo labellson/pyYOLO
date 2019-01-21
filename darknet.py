@@ -7,6 +7,11 @@ from torch.autograd import Variable
 import numpy as np
 
 
+class EmptyLayer(nn.Module):
+    def __init__(self):
+        super(EmptyLayer, self).__init__()
+
+
 def parse_cfg(cfgfile):
     """
     Takes a configuration file
@@ -74,6 +79,29 @@ def upsample(idx, block):
     return module
 
 
+def route(idx, block, output_filters):
+    module = nn.Sequential()
+    route_idx = block['layers'].split(',')
+
+    start = int(route_idx[0])
+    end = int(route_idx[1]) if len(route_idx) > 1 else 0
+
+    route = EmptyLayer()
+    module.add_module('route_{}'.format(idx), route)
+
+    # Compute the output feature map size
+    if start < 0:
+        start += idx
+    if end < 0:
+        end += idx
+    if end > 0:
+        filters = output_filters[start] + output_filters[end]
+    else:
+        filters = output_filters[start]
+
+    return module, filters
+
+
 def create_modules(blocks):
     net_info = blocks[0]  # First block contains net hyperparameters
     module_list = nn.ModuleList()
@@ -90,6 +118,9 @@ def create_modules(blocks):
 
         elif block_type == 'upsample':
             module = upsample(idx, block)
+
+        elif block_type == 'route':
+            module, prev_filters = route(idx, block, output_filters)
 
         # Append the module and it output feature map depth size
         module_list.append(module)
