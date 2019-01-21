@@ -215,6 +215,92 @@ class Darknet(nn.Module):
 
         return detections
 
+    def load_weights(self, weightfile):
+        """"
+        Load .weights file.
+        The first 5 values are header information:
+
+        1. Major version number
+        2. Minor version number
+        3. Patch version number
+        4,5. Images seen by the network (during training)
+        """
+        with open(weightfile, 'rb') as f:
+            header = np.fromfile(f, dtype=np.int32, count=5)
+            self.header = torch.from_numpy(header)
+            self.seen = self.header[3]
+        
+            weights = np.fromfile(f, dtype=np.float32)
+
+            ptr = 0 # Where we are in the weight file
+            for idx in range(len(self.module_list)):
+                module_type = self.blocks[idx + 1]['type']
+
+                # Only convolutional layers has weights
+                if module_type == 'convolutional':
+                    module = self.module_list[idx]
+                    batch_normalize = int(self.blocks[idx + 1].get('batch_normalize',
+                                                                   0))
+
+                    conv = module[0]
+
+                    # If the Conv layer has batch_norm. It has not got bias.
+                    if batch_normalize:
+                        bn = module[1]
+
+                        # Get the number of weights of BN Layer
+                        num_bn_biases = bn.bias.numel()
+
+                        # Load the weights
+                        bn_biases = torch.from_numpy(weights[ptr:ptr +
+                                                             num_bn_biases])
+                        ptr += num_bn_biases
+
+                        bn_weights = torch.from_numpy(weights[ptr:ptr +
+                                                              num_bn_biases])
+                        ptr += num_bn_biases
+
+                        bn_running_mean = torch.from_numpy(weights[ptr:ptr +
+                                                                   num_bn_biases])
+                        ptr += num_bn_biases
+
+                        bn_running_var = torch.from_numpy(weights[ptr:ptr +
+                                                                  num_bn_biases])
+                        ptr += num_bn_biases
+
+                        # Cast the loaded weights into dim of model weights
+                        bn_biases = bn_biases.view_as(bn.bias.data)
+                        bn_weights = bn_weights.view_as(bn.weight.data)
+                        bn_running_mean = bn_running_mean.view_as(bn.running_mean)
+                        bn_running_var = bn_running_var.view_as(bn.running_var)
+
+                        # Copy the data to the model
+                        bn.bias.data.copy_(bn_biases)
+                        bn.weight.data.copy_(bn_weights)
+                        bn.running_mean.copy_(bn_running_mean)
+                        bn.running_var.copy_(bn_running_var)
+
+                    else:
+                        # Conv biases
+                        num_biases = conv.bias.numel()
+
+                        # Load weights
+                        conv_biases = torch.from_numpy(weights[ptr:ptr + num_biases])
+                        ptr += num_biases
+
+                        conv_biases = conv_biases.view_as(conv.bias.data)
+                        conv.bias.data.copy_(conv_biases)
+
+                    # Load the weights for the conv layer
+                    num_weights = conv.weight.numel()
+
+                    conv_weights = torch.from_numpy(weights[ptr:ptr +
+                                                            num_weights])
+                    ptr += num_weights
+
+                    conv_weights = conv_weights.view_as(conv.weight.data)
+                    conv.weight.data.copy_(conv_weights)
+
 
 if __name__ == '__main__':
     blocks = parse_cfg('./yolov3.cfg')
@@ -232,3 +318,6 @@ if __name__ == '__main__':
     model = Darknet('./yolov3.cfg')
     pred = model(img, False)
     print(pred)
+
+    # Test load_weights function
+    model.load_weights('./yolov3.weights')
