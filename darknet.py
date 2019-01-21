@@ -32,7 +32,7 @@ def parse_cfg(cfgfile):
         for line in f:
             line = line.lstrip().rstrip()  # Remove begin/end whitespaces
 
-            if len(line) < 0 or line[0] == '#':
+            if len(line) <= 0 or line[0] == '#':
                 continue
 
             if line[0] == '[':
@@ -67,7 +67,7 @@ def convolutional(idx, block, in_channels):
     module.add_module('conv_{}'.format(idx), conv)
 
     if batch_normalize:
-        bn = nn.BatchNorm2d(filter)
+        bn = nn.BatchNorm2d(filters)
         module.add_module('batch_norm_{}'.format(idx), bn)
 
     # Check the activation possible values leaky relu and linear
@@ -160,3 +160,9 @@ def create_modules(blocks):
         output_filters.append(prev_filters)
 
     return (net_info, module_list)
+
+
+if __name__ == '__main__':
+    blocks = parse_cfg('./yolov3.cfg')
+    modules = create_modules(blocks)
+    print(modules)
