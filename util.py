@@ -9,6 +9,14 @@ import cv2
 
 
 def predict_transform(prediction, in_dim, anchors, num_classes, cuda=True):
+    """
+    NBatches: Number of input batches
+    BBoxes: Total amount of bounding boxes given the following pixel order ->
+    [(0,0), (0,0), (0,0), (0,1), ..., (n, n)]
+    Attributes: tx + ty + w + h + num_classes
+
+    :return: (NBatches, BBoxes, Attributes) -> torch.Tensor
+    """
     batch_size = prediction.size(0)
     stride = in_dim // prediction.size(2)
     grid_size = in_dim // stride
@@ -58,3 +66,107 @@ def predict_transform(prediction, in_dim, anchors, num_classes, cuda=True):
     # Resize to the input image size
     prediction[:, :, :4] *= stride
     return prediction
+
+
+def bbox_iou(box1, box2):
+    """
+    Returns the IoU of two bounding boxes 
+    
+    
+    """
+    #Get the coordinates of bounding boxes
+    b1_x1, b1_y1, b1_x2, b1_y2 = box1[:,0], box1[:,1], box1[:,2], box1[:,3]
+    b2_x1, b2_y1, b2_x2, b2_y2 = box2[:,0], box2[:,1], box2[:,2], box2[:,3]
+    
+    #get the corrdinates of the intersection rectangle
+    inter_rect_x1 =  torch.max(b1_x1, b2_x1)
+    inter_rect_y1 =  torch.max(b1_y1, b2_y1)
+    inter_rect_x2 =  torch.min(b1_x2, b2_x2)
+    inter_rect_y2 =  torch.min(b1_y2, b2_y2)
+    
+    #Intersection area
+    inter_area = torch.clamp(inter_rect_x2 - inter_rect_x1 + 1, min=0) * torch.clamp(inter_rect_y2 - inter_rect_y1 + 1, min=0)
+ 
+    #Union Area
+    b1_area = (b1_x2 - b1_x1 + 1)*(b1_y2 - b1_y1 + 1)
+    b2_area = (b2_x2 - b2_x1 + 1)*(b2_y2 - b2_y1 + 1)
+    
+    iou = inter_area / (b1_area + b2_area - inter_area)
+    
+    return iou
+
+
+def write_results(prediction, confidence, num_classes, nms_conf=0.4):
+    # Set all the object confidence below confidence to zero
+    conf_mask = (prediction[:, :, 4] > confidence).float().unsqueeze(2)
+    prediction = prediction * conf_mask
+
+    # Convert the prediction to (top-left x, top-left y, bottom-right x,
+    # bottom-right y, ...)
+    tx, ty, w, h = prediction[:, :, 0], prediction[:, :, 1], \
+                   prediction[:, :, 2], prediction[:, :, 3]
+    prediction[:, :, 0] = tx - w / 2
+    prediction[:, :, 1] = ty - h / 2
+    prediction[:, :, 2] = tx + w / 2
+    prediction[:, :, 3] = tx + h / 2
+
+    write = False
+    for batch_idx in prediction.size(0):
+        img_pred = prediction(batch_idx)
+
+        # Remove the bboxes below confidence
+        non_zero_idx = torch.nonzero(img_pred[:, 4])
+        if len(non_zero_idx) == 0:
+            continue
+
+        _img_pred = img_pred[non_zero_idx.squeeze(), :].view(-1, 5 +
+                                                             num_classes)
+
+        # Compute the belonging class
+        confidence, class_ = torch.max(_img_pred[:, 5:], 1)
+        confidence = confidence.float().unsqueeze(1)
+        class_ = class_.float().unsqueeze(1)
+        _image_pred = torch.cat((img_pred[:, :5], confidence, class_), 1)
+
+        # Get classes detected in the image
+        img_classes = torch.unique(_image_pred[:, -1], sorted=True)
+
+        # Perform NMS classwise
+        for cls in img_classes:
+            # Get the detections of one particular class
+            img_pred_class = _image_pred[_image_pred[:, -1] == cls]
+
+            # Sort detections given the confidence
+            _, sort_conf_idx = torch.sort(img_pred_class[:, 4],
+                                          descending=True)
+            img_pred_class = img_pred_class[sort_conf_idx]
+
+            for idx in range(img_pred_class.size(0)):
+                # Get IoU of all boxes after
+                if idx + 1 >= img_pred_class.size(0):
+                    break
+
+                ious = bbox_iou(img_pred_class[idx].unsqueeze(0),
+                                img_pred_class[idx + 1:])
+
+                # Remove detections with IoU > nms_threshold
+                iou_idx = ious < nms_conf
+                img_pred_class = torch.cat((img_pred_class[:idx + 1],
+                                            img_pred_class[idx + 1:][iou_idx]))
+
+            batch_idx = img_pred_class.new(img_pred_class.size(0),
+                                           1).fill_(batch_idx)
+
+            out = (batch_idx, img_pred_class)
+            if not write:
+                output = torch.cat(out, 1)
+                write = True
+
+            else:
+                output = torch.cat(output, torch.cat(out, 1))
+
+    try:
+        return output
+
+    except Exception:
+        return 0
