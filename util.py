@@ -96,7 +96,7 @@ def bbox_iou(box1, box2):
     return iou
 
 
-def write_results(prediction, confidence, num_classes, nms_conf=0.4):
+def write_results(prediction, confidence, num_classes, nms_conf=0.4, cuda=True):
     # Set all the object confidence below confidence to zero
     conf_mask = (prediction[:, :, 4] > confidence).float().unsqueeze(2)
     prediction = prediction * conf_mask
@@ -111,8 +111,8 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
     prediction[:, :, 3] = tx + h / 2
 
     write = False
-    for batch_idx in prediction.size(0):
-        img_pred = prediction(batch_idx)
+    for batch_idx in range(prediction.size(0)):
+        img_pred = prediction[batch_idx]
 
         # Remove the bboxes below confidence
         non_zero_idx = torch.nonzero(img_pred[:, 4])
@@ -126,10 +126,13 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
         confidence, class_ = torch.max(_img_pred[:, 5:], 1)
         confidence = confidence.float().unsqueeze(1)
         class_ = class_.float().unsqueeze(1)
-        _image_pred = torch.cat((img_pred[:, :5], confidence, class_), 1)
+        _image_pred = torch.cat((_img_pred[:, :5], confidence, class_), 1)
 
         # Get classes detected in the image
-        img_classes = torch.unique(_image_pred[:, -1], sorted=True)
+        img_classes = torch.unique(_image_pred[:, -1].cpu(), sorted=True)
+
+        if cuda:
+            img_classes = img_classes.cuda()
 
         # Perform NMS classwise
         for cls in img_classes:
@@ -154,19 +157,51 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4):
                 img_pred_class = torch.cat((img_pred_class[:idx + 1],
                                             img_pred_class[idx + 1:][iou_idx]))
 
-            batch_idx = img_pred_class.new(img_pred_class.size(0),
-                                           1).fill_(batch_idx)
+            batch_idx_tensor = img_pred_class.new(img_pred_class.size(0),
+                                                  1).fill_(batch_idx)
 
-            out = (batch_idx, img_pred_class)
+            out = (batch_idx_tensor, img_pred_class)
             if not write:
                 output = torch.cat(out, 1)
                 write = True
 
             else:
-                output = torch.cat(output, torch.cat(out, 1))
+                output = torch.cat((output, torch.cat(out, 1)))
 
     try:
         return output
 
     except Exception:
         return 0
+
+
+def letterbox_image(img, dim):
+    """
+    Resize image with unchanged aspect ratio using padding and filled with
+    (128, 128, 128)
+    """
+    img_h, img_w, _ = img.shape
+    w, h = dim
+    scale_factor = w / max(img_w, img_h)
+
+    new_w = int(img_w * scale_factor)
+    new_h = int(img_h * scale_factor)
+
+    resized_image = cv2.resize(img, (new_w, new_h),
+                               interpolation=cv2.INTER_CUBIC)
+    canvas = np.full((h, w, 3), 128)
+    canvas[(h - new_h) // 2:(h - new_h) // 2 + new_h,
+           (w - new_w) // 2:(w - new_w) // 2 + new_w] = resized_image
+    return canvas
+
+
+def prep_image(img, dim):
+    """
+    Convert images to the input type of the neural networ
+    
+    :return: torch.autograd.Variable
+    """
+    img = letterbox_image(img, (dim, dim))
+    img = img[:, :, ::-1].copy().transpose((2, 0, 1))
+    img = torch.from_numpy(img).float().div(255.0).unsqueeze(0)
+    return img
