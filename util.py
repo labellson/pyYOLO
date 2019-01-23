@@ -97,39 +97,33 @@ def bbox_iou(box1, box2):
 
 
 def write_results(prediction, confidence, num_classes, nms_conf=0.4, cuda=True):
-    # Set all the object confidence below confidence to zero
-    conf_mask = (prediction[:, :, 4] > confidence).float().unsqueeze(2)
-    prediction = prediction * conf_mask
+    # Remove all the predictions below confidence
+    prediction = prediction[prediction[:, :, 4] > confidence]
+
+    if len(prediction.shape) < 3:
+        prediction = prediction.unsqueeze(0)
 
     # Convert the prediction to (top-left x, top-left y, bottom-right x,
     # bottom-right y, ...)
-    tx, ty, w, h = prediction[:, :, 0], prediction[:, :, 1], \
-                   prediction[:, :, 2], prediction[:, :, 3]
+    tx, ty, w, h = prediction[:, :, 0].clone(), prediction[:, :, 1].clone(), \
+                   prediction[:, :, 2].clone(), prediction[:, :, 3].clone()
     prediction[:, :, 0] = tx - w / 2
     prediction[:, :, 1] = ty - h / 2
     prediction[:, :, 2] = tx + w / 2
-    prediction[:, :, 3] = tx + h / 2
+    prediction[:, :, 3] = ty + h / 2
 
     write = False
     for batch_idx in range(prediction.size(0)):
         img_pred = prediction[batch_idx]
 
-        # Remove the bboxes below confidence
-        non_zero_idx = torch.nonzero(img_pred[:, 4])
-        if len(non_zero_idx) == 0:
-            continue
-
-        _img_pred = img_pred[non_zero_idx.squeeze(), :].view(-1, 5 +
-                                                             num_classes)
-
         # Compute the belonging class
-        confidence, class_ = torch.max(_img_pred[:, 5:], 1)
+        confidence, class_ = torch.max(img_pred[:, 5:], 1)
         confidence = confidence.float().unsqueeze(1)
         class_ = class_.float().unsqueeze(1)
-        _image_pred = torch.cat((_img_pred[:, :5], confidence, class_), 1)
+        img_pred = torch.cat((img_pred[:, :5], confidence, class_), 1)
 
         # Get classes detected in the image
-        img_classes = torch.unique(_image_pred[:, -1].cpu(), sorted=True)
+        img_classes = torch.unique(img_pred[:, -1].cpu(), sorted=True)
 
         if cuda:
             img_classes = img_classes.cuda()
@@ -137,7 +131,7 @@ def write_results(prediction, confidence, num_classes, nms_conf=0.4, cuda=True):
         # Perform NMS classwise
         for cls in img_classes:
             # Get the detections of one particular class
-            img_pred_class = _image_pred[_image_pred[:, -1] == cls]
+            img_pred_class = img_pred[img_pred[:, -1] == cls]
 
             # Sort detections given the confidence
             _, sort_conf_idx = torch.sort(img_pred_class[:, 4],

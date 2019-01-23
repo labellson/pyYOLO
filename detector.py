@@ -105,9 +105,6 @@ if __name__ == '__main__':
     im_batches = list(map(prep_image, loaded_img,
                       [in_dim for _ in range(len(imlist))]))
 
-    import ipdb
-    ipdb.set_trace()
-
     # List containing dimension of original images
     im_dim_list = [(im.shape[1], im.shape[0]) for im in loaded_img]
     im_dim_list = torch.FloatTensor(im_dim_list).repeat(1, 2)
